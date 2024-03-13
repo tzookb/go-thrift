@@ -40,9 +40,9 @@ func toIfaceSlice(v interface{}) []interface{} {
 
 func ifaceSliceToString(v interface{}) string {
 	ifs := toIfaceSlice(v)
-	b := make([]byte, len(ifs))
-	for i, v := range ifs {
-		b[i] = v.([]uint8)[0]
+	b := make([]byte, 0, len(ifs))
+	for _, v := range ifs {
+		b = append(b, v.([]uint8)...)
 	}
 	return string(b)
 }
@@ -50,10 +50,10 @@ func ifaceSliceToString(v interface{}) string {
 func ifaceSliceToCommentString(v interface{}) string {
         cps := v.([]interface{})
         ccs := cps[1].([]interface{})
-        b := make([]byte, len(ccs))
-        for i, v := range ccs {
-                tmp := v.([]interface{})
-                b[i] = tmp[1].([]uint8)[0]
+	b := make([]byte, 0, len(ccs))
+	for _, v := range ccs {
+		tmp := v.([]interface{})
+		b = append(b, tmp[1].([]uint8)...)
         }
         s := strings.Replace(string(b), "\n", "", -1)
         return strings.TrimSpace(s)
@@ -62,10 +62,10 @@ func ifaceSliceToCommentString(v interface{}) string {
 func ifaceSliceToBlockCommentLineString(v interface{}) string {
         cps := v.([]interface{})
         ccs := cps[1].([]interface{})
-        b := make([]byte, len(ccs))
-        for i, v := range ccs {
-                tmp := v.([]interface{})
-                b[i] = tmp[1].([]uint8)[0]
+	b := make([]byte, 0, len(ccs))
+	for _, v := range ccs {
+		tmp := v.([]interface{})
+		b = append(b, tmp[1].([]uint8)...)
         }
         s := strings.Replace(string(b), "\n", "", -1)
         for {

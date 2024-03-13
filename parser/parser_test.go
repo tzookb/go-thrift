@@ -52,7 +52,7 @@ func TestServiceParsing(t *testing.T) {
 
 		service ServiceNAME extends SomeBase
 		{
-			# authenticate method
+			# authenticate method 🔐
 			// comment2
 			/* some other
 			   comments */
@@ -224,7 +224,8 @@ func TestServiceParsing(t *testing.T) {
 			Extends: "SomeBase",
 			Methods: map[string]*Method{
 				"login": &Method{
-					Name: "login",
+					Name:    "login",
+					Comment: "authenticate method 🔐 comment2 some other\t\t\t   comments",
 					ReturnType: &Type{
 						Name: "string",
 					},
