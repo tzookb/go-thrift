@@ -547,3 +547,200 @@ func parse(contents string) (*Thrift, error) {
 	thrift, err := parser.Parse(strings.NewReader(contents))
 	return thrift, err
 }
+
+// TestServiceMethodLeadingComments guards against a regression in which only the
+// first method in a service body kept its leading comment. The whitespace after
+// a method's closing paren used to swallow the next method's leading comment as
+// trailing whitespace, so every method after the first lost its comment unless
+// it happened to carry a trailing annotation or list separator.
+func TestServiceMethodLeadingComments(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		src      string
+		expected map[string]string // method name -> expected comment
+	}{
+		{
+			name: "hash comments no separators",
+			src: `service S {
+    # Alpha description: first method in the body.
+    AlphaResponse alpha(1: AlphaRequest req)
+
+    # Beta description: second method in the body.
+    BetaResponse beta(1: BetaRequest req)
+}`,
+			expected: map[string]string{
+				"alpha": "Alpha description: first method in the body.",
+				"beta":  "Beta description: second method in the body.",
+			},
+		},
+		{
+			name: "slash comments no separators",
+			src: `service S {
+    // Alpha description.
+    AlphaResponse alpha(1: AlphaRequest req)
+    // Beta description.
+    BetaResponse beta(1: BetaRequest req)
+}`,
+			expected: map[string]string{
+				"alpha": "Alpha description.",
+				"beta":  "Beta description.",
+			},
+		},
+		{
+			name: "multi-line leading comment on non-first method",
+			src: `service S {
+    AlphaResponse alpha(1: AlphaRequest req)
+    # Beta line one.
+    # Beta line two.
+    BetaResponse beta(1: BetaRequest req)
+}`,
+			expected: map[string]string{
+				"alpha": "",
+				"beta":  "Beta line one. Beta line two.",
+			},
+		},
+		{
+			// Multi-line block comments are captured as leading comments.
+			// Single-line "/* ... */" comments are treated as inline whitespace
+			// by the grammar and are intentionally not captured, matching the
+			// pre-existing behavior for the first method.
+			//
+			// The parser strips newlines but preserves the original indentation
+			// between lines, which is why the expected value keeps the inner run
+			// of spaces from the second line's leading whitespace.
+			name: "multi-line block comment leading on non-first method",
+			src: `service S {
+    AlphaResponse alpha(1: AlphaRequest req)
+    /* Beta block comment
+       continued. */
+    BetaResponse beta(1: BetaRequest req)
+}`,
+			expected: map[string]string{
+				"alpha": "",
+				"beta":  "Beta block comment       continued.",
+			},
+		},
+		{
+			name: "mixed annotations and separators",
+			src: `service S {
+    # alpha comment
+    AlphaResponse alpha(1: AlphaRequest req),
+    # beta comment
+    BetaResponse beta(1: BetaRequest req) throws (1: SomeException e)
+    # gamma comment
+    GammaResponse gamma(1: GammaRequest req);
+}`,
+			expected: map[string]string{
+				"alpha": "alpha comment",
+				"beta":  "beta comment",
+				"gamma": "gamma comment",
+			},
+		},
+		{
+			name: "trailing same-line comment not mis-attached to next method",
+			src: `service S {
+    AlphaResponse alpha(1: AlphaRequest req) // trailing alpha
+    BetaResponse beta(1: BetaRequest req) // trailing beta
+}`,
+			expected: map[string]string{
+				"alpha": "trailing alpha",
+				"beta":  "trailing beta",
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			thrift, err := parse(tt.src)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			svc := thrift.Services["S"]
+			if svc == nil {
+				t.Fatalf("service S missing; got %+v", thrift.Services)
+			}
+			if len(svc.Methods) != len(tt.expected) {
+				t.Fatalf("expected %d methods, got %d: %+v", len(tt.expected), len(svc.Methods), svc.Methods)
+			}
+			for name, want := range tt.expected {
+				m := svc.Methods[name]
+				if m == nil {
+					t.Fatalf("method %q missing", name)
+				}
+				if m.Comment != want {
+					t.Errorf("method %q: expected comment %q, got %q", name, want, m.Comment)
+				}
+			}
+		})
+	}
+}
+
+// TestStructFieldLeadingComments guards the same leading-comment binding fix for
+// struct fields, where the whitespace after a field's name used to swallow the
+// next field's leading comment as trailing whitespace.
+func TestStructFieldLeadingComments(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		src      string
+		expected map[string]string // field name -> expected comment
+	}{
+		{
+			name: "hash comments on each field",
+			src: `struct S {
+    # field one comment
+    1: i32 a
+    # field two comment
+    2: i32 b
+}`,
+			expected: map[string]string{
+				"a": "field one comment",
+				"b": "field two comment",
+			},
+		},
+		{
+			name: "field default on next line keeps next field comment",
+			src: `struct S {
+    1: i64 x
+        = 5
+    # y comment
+    2: i64 y
+}`,
+			expected: map[string]string{
+				"x": "",
+				"y": "y comment",
+			},
+		},
+		{
+			name: "trailing same-line comment not mis-attached",
+			src: `struct S {
+    1: i32 a // trailing a
+    2: i32 b // trailing b
+}`,
+			expected: map[string]string{
+				"a": "trailing a",
+				"b": "trailing b",
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			thrift, err := parse(tt.src)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			st := thrift.Structs["S"]
+			if st == nil {
+				t.Fatalf("struct S missing; got %+v", thrift.Structs)
+			}
+			if len(st.Fields) != len(tt.expected) {
+				t.Fatalf("expected %d fields, got %d: %+v", len(tt.expected), len(st.Fields), st.Fields)
+			}
+			got := map[string]string{}
+			for _, f := range st.Fields {
+				got[f.Name] = f.Comment
+			}
+			for name, want := range tt.expected {
+				if got[name] != want {
+					t.Errorf("field %q: expected comment %q, got %q", name, want, got[name])
+				}
+			}
+		})
+	}
+}
