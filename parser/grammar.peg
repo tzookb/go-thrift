@@ -314,7 +314,7 @@ FieldList ← fields:(Field (Whitespace / EOL)*)* {
 	return flds, nil
 }
 
-Field ← blockComment:(_ Comment? EOL)* _ id:IntConstant _ ':' _ req:FieldReq? _ typ:FieldType _ name:Identifier __ def:('=' _ ConstValue)? _ annotations:TypeAnnotations? ListSeparator? _ comment:Comment? {
+Field ← blockComment:(_ Comment? EOL)* _ id:IntConstant _ ':' _ req:FieldReq? _ typ:FieldType _ name:Identifier def:(__N '=' _ ConstValue)? _ annotations:TypeAnnotations? ListSeparator? _ comment:Comment? {
 	f := &Field{
 		Pos      : makePos(c.pos),
 		ID       : int(id.(int64)),
@@ -326,7 +326,10 @@ Field ← blockComment:(_ Comment? EOL)* _ id:IntConstant _ ':' _ req:FieldReq? 
 		f.Optional = true
 	}
 	if def != nil {
-		f.Default = def.([]interface{})[2]
+		// def is the optional group (__N '=' _ ConstValue); the ConstValue is
+		// its 4th element. __N is kept inside the group so that, when there is
+		// no default, backtracking leaves any following leading comment intact.
+		f.Default = def.([]interface{})[3]
 	}
 	if comment != nil {
 		f.Comment = ifaceSliceToCommentString(comment)
@@ -371,7 +374,7 @@ EndOfServiceError ← . {
 	return nil, errors.New("parser: expected end of service")
 }
 
-Function ← blockComment:(_ Comment? EOL)* _ oneway:("oneway" __)? typ:FunctionType __ name:Identifier _ '(' __ arguments:FieldList ')' __ exceptions:Throws? _ annotations:TypeAnnotations? ListSeparator? _ comment:Comment? {
+Function ← blockComment:(_ Comment? EOL)* _ oneway:("oneway" __)? typ:FunctionType __ name:Identifier _ '(' __ arguments:FieldList ')' exceptions:(__N Throws)? _ annotations:TypeAnnotations? ListSeparator? _ comment:Comment? {
 	m := &Method{
 		Pos: makePos(c.pos),
 		Name: string(name.(Identifier)),
@@ -388,7 +391,11 @@ Function ← blockComment:(_ Comment? EOL)* _ oneway:("oneway" __)? typ:Function
 		m.Arguments = arguments.([]*Field)
 	}
 	if exceptions != nil {
-		m.Exceptions = exceptions.([]*Field)
+		// exceptions is the optional group (__N Throws); the Throws result
+		// (a []*Field) is its 2nd element. __N is kept inside the group so that,
+		// when there is no throws clause, backtracking leaves any following
+		// leading comment intact.
+		m.Exceptions = exceptions.([]interface{})[1].([]*Field)
 		for _, e := range m.Exceptions {
 			e.Optional = true
 		}
@@ -560,6 +567,19 @@ MultiLineCommentNoLineTerminator ← "/*" ( !( "*/" / EOL ) SourceChar )* "*/"
 SingleLineComment ← ("//" ( !EOL SourceChar )*) / ("#" ( !EOL SourceChar )*)
 
 __ ← ( Whitespace / EOL / Comment )*
+// __N ("no single-line comment") matches the same whitespace as __ but never
+// consumes single-line ("//" or "#") comments. It exists so that a single-line
+// comment preceding a declaration stays bound to the FOLLOWING declaration
+// instead of being swallowed as trailing whitespace of the PREVIOUS one.
+//
+// It is used only inside optional continuation groups -- a Function's "throws"
+// clause and a Field's "= default" clause. When the continuation is present
+// __N spans any newlines/block comments before it; when it is absent the whole
+// group fails and PEG backtracking rewinds __N, leaving the parser positioned
+// at the start of the next line's leading comment. (Plain __ would consume that
+// comment during the failed attempt, which is what dropped comments on every
+// declaration after the first.)
+__N ← ( Whitespace / EOL / MultiLineComment )*
 _ ← ( Whitespace / MultiLineCommentNoLineTerminator )*
 WS ← Whitespace*
 
